@@ -11,3 +11,10 @@ wheels/
 
 # Local environment variables
 .env
+
+# Datasets & weights
+*.pt
+*.pth
+*.tar.gz
+data/
+CNN_Assignment2/data/
