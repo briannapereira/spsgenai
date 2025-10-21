@@ -117,7 +117,7 @@ CKPT_GAN = ROOT / "GAN_Assignment3" / "checkpoints" / "G_epoch020.pt"
 G = Generator(z_dim=100).to(device)
 try:
     state = torch.load(CKPT_GAN, map_location=device)
-    # handle either raw state_dict or {'state_dict': ...}
+
     G.load_state_dict(state if isinstance(state, dict) and next(iter(state)).startswith("deconv") else (
         state["state_dict"] if isinstance(state, dict) and "state_dict" in state else state
     ))
@@ -136,7 +136,7 @@ def gan_generate(n: int = Query(16, ge=1, le=64)):
         return JSONResponse({"error": "GAN generator not loaded; check checkpoint path"}, status_code=503)
     with torch.no_grad():
         z = torch.randn(n, 100, device=device)
-        imgs = G(z).cpu()  # (n,1,28,28), in [-1,1]
+        imgs = G(z).cpu() 
         grid = make_grid(imgs, nrow=max(1, int(n**0.5)), normalize=True, value_range=(-1, 1))
 
         import numpy as np
