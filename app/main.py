@@ -3,6 +3,7 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 from app.bigram_model import BigramModel
 
+#Assignment 1
 from app.embeddings import (
     EmbedRequest, EmbedResponse, SimilarityRequest, SimilarityResponse,
     embed_texts, cosine_similarity, MODEL_NAME
@@ -28,7 +29,7 @@ class TextGenerationRequest(BaseModel):
 def read_root():
     return {"Hello": "World"}
 
-@app.post("/generate")
+@app.post("/bigram/generate")
 def generate_text(request: TextGenerationRequest):
     generated_text = bigram_model.generate_text(request.start_word, request.length)
     return {"generated_text": generated_text}
@@ -41,6 +42,7 @@ def embed(req: EmbedRequest):
 def similarity(req: SimilarityRequest):
     return cosine_similarity(req.a, req.b)
 
+#Assignment 2 CNN 
 import io
 import torch
 from PIL import Image
@@ -101,3 +103,49 @@ async def predict(file: UploadFile = File(...)):
             for p, i in zip(top.values.tolist(), top.indices.tolist())
         ]
     }
+
+#Assignment 3 GAN
+import io
+import base64
+import torch
+from fastapi import Query
+from fastapi.responses import JSONResponse
+from torchvision.utils import make_grid
+from GAN_Assignment3.model import Generator
+
+CKPT_GAN = ROOT / "GAN_Assignment3" / "checkpoints" / "G_epoch020.pt"
+G = Generator(z_dim=100).to(device)
+try:
+    state = torch.load(CKPT_GAN, map_location=device)
+    # handle either raw state_dict or {'state_dict': ...}
+    G.load_state_dict(state if isinstance(state, dict) and next(iter(state)).startswith("deconv") else (
+        state["state_dict"] if isinstance(state, dict) and "state_dict" in state else state
+    ))
+    G.eval()
+    print(f"Loaded GAN checkpoint from {CKPT_GAN}")
+except FileNotFoundError:
+    print(f"GAN checkpoint not found at {CKPT_GAN}. /gan/generate will 404.")
+    G = None
+except Exception as e:
+    print(f"Failed to load GAN checkpoint at {CKPT_GAN}: {e}")
+    G = None
+
+@app.get("/gan/generate")
+def gan_generate(n: int = Query(16, ge=1, le=64)):
+    if G is None:
+        return JSONResponse({"error": "GAN generator not loaded; check checkpoint path"}, status_code=503)
+    with torch.no_grad():
+        z = torch.randn(n, 100, device=device)
+        imgs = G(z).cpu()  # (n,1,28,28), in [-1,1]
+        grid = make_grid(imgs, nrow=max(1, int(n**0.5)), normalize=True, value_range=(-1, 1))
+
+        import numpy as np
+        from PIL import Image
+        nd = (grid.permute(1, 2, 0).numpy() * 255).clip(0, 255).astype("uint8")
+        if nd.shape[-1] == 1:
+            nd = nd.squeeze(-1)
+        img = Image.fromarray(nd)
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+        return JSONResponse({"image_base64_png": b64})
