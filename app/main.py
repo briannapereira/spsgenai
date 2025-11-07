@@ -149,3 +149,100 @@ def gan_generate(n: int = Query(16, ge=1, le=64)):
         img.save(buf, format="PNG")
         b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
         return JSONResponse({"image_base64_png": b64})
+    
+#Assignment 4
+from AdvancedImage_Assignment4.energy import EnergyCNN
+from AdvancedImage_Assignment4.unet_ddpm import UNet, DDPM
+
+CIFAR_MEAN = (0.4914, 0.4822, 0.4465)
+CIFAR_STD  = (0.2470, 0.2435, 0.2616)
+_a4_preprocess = T.Compose([
+    T.Resize((32, 32)),
+    T.ToTensor(),
+    T.Normalize(CIFAR_MEAN, CIFAR_STD),
+])
+
+_A4_ENERGY: EnergyCNN | None = None
+_A4_DDPM: DDPM | None = None
+
+def a4_load_energy(path: str = "./checkpoints/ebm/energy_epoch_010.pt") -> EnergyCNN | None:
+     """Loads EnergyCNN once; returns None if checkpoint missing."""
+     global _A4_ENERGY
+     if _A4_ENERGY is None:
+        m = EnergyCNN().to(device)
+        try:
+            state = torch.load(path, map_location=device)
+            if isinstance(state, dict) and "state_dict" in state:
+                state = state["state_dict"]
+                m.load_state_dict(state)
+                m.eval()
+                _A4_ENERGY = m
+                print(f"[A4] Loaded EnergyCNN from {path}")
+        except FileNotFoundError:
+                print(f"[A4] Energy checkpoint not found at {path}")
+                _A4_ENERGY = None
+        except Exception as e:
+                print(f"[A4] Failed to load EnergyCNN ({e})")
+                _A4_ENERGY = None
+                return _A4_ENERGY
+
+def a4_load_ddpm(path: str = "./checkpoints/ddpm/ddpm_epoch_050.pt") -> DDPM | None:
+        """Loads DDPM(UNet) once; returns None if checkpoint missing."""
+        global _A4_DDPM
+        if _A4_DDPM is None:
+            try:
+                unet = UNet()
+                ddpm = DDPM(unet)
+                state = torch.load(path, map_location=device)
+                if isinstance(state, dict) and "state_dict" in state:
+                    state = state["state_dict"]
+                ddpm.load_state_dict(state, strict=False)
+                ddpm = ddpm.to(device).eval()
+                _A4_DDPM = ddpm
+                print(f"[A4] Loaded DDPM from {path}")
+            except FileNotFoundError:
+                print(f"[A4] DDPM checkpoint not found at {path}")
+                _A4_DDPM = None
+            except Exception as e:
+                print(f"[A4] Failed to load DDPM ({e})")
+                _A4_DDPM = None
+        return _A4_DDPM
+
+class A4GenerateRequest(BaseModel):
+        num_images: int = 4
+        steps: int = 250
+        seed: int | None = None
+
+@app.post("/generate/diffusion")
+async def a4_generate_diffusion(req: A4GenerateRequest):
+        ddpm = a4_load_ddpm()
+        if ddpm is None:
+            return JSONResponse({"error": "DDPM checkpoint not loaded. Check path."}, status_code=503)
+        if req.seed is not None:
+            torch.manual_seed(req.seed)
+        with torch.no_grad():
+
+            imgs = ddpm.sample((req.num_images, 3, 32, 32), steps=req.steps, device=device)
+            imgs = (imgs * 0.5 + 0.5).clamp(0, 1)
+            out = []
+            for i in range(req.num_images):
+                pil = T.ToPILImage()(imgs[i].cpu())
+                buf = io.BytesIO()
+                pil.save(buf, format="PNG")
+                out.append(base64.b64encode(buf.getvalue()).decode("utf-8"))
+        return JSONResponse({"images_b64": out})
+
+@app.post("/energy/score")
+async def a4_energy_score(file: UploadFile = File(...)):
+        energy_model = a4_load_energy()
+        if energy_model is None:
+            return JSONResponse({"error": "Energy model checkpoint not loaded. Check path."}, status_code=503)
+        byts = await file.read()
+        try:
+            pil = Image.open(io.BytesIO(byts)).convert("RGB")
+        except Exception:
+            return JSONResponse({"error": "Invalid image"}, status_code=400)
+        x = _a4_preprocess(pil).unsqueeze(0).to(device)
+        with torch.no_grad():
+            energy = energy_model(x).item()
+        return {"energy": float(energy)}
