@@ -246,3 +246,69 @@ async def a4_energy_score(file: UploadFile = File(...)):
         with torch.no_grad():
             energy = energy_model(x).item()
         return {"energy": float(energy)}
+
+#Assignment 5
+from transformers import AutoTokenizer, AutoModelForCausalLM
+import torch
+
+MODEL_PATH = "models/gpt2-qa-rl" 
+
+PREFIX = "That is a great question. "
+SUFFIX = " Let me know if you have any other questions."
+
+class GPT2QA:
+    def __init__(self, model_path: str = MODEL_PATH):
+        self.tokenizer = AutoTokenizer.from_pretrained(model_path)
+        if self.tokenizer.pad_token is None:
+            self.tokenizer.pad_token = self.tokenizer.eos_token
+
+        self.model = AutoModelForCausalLM.from_pretrained(model_path)
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.model.to(self.device)
+        self.model.eval()
+
+    def answer(self, question: str, max_new_tokens: int = 64) -> str:
+        prompt = f"Question: {question.strip()}\nAnswer:"
+        inputs = self.tokenizer(prompt, return_tensors="pt").to(self.device)
+
+        with torch.no_grad():
+            output_ids = self.model.generate(
+                **inputs,
+                max_new_tokens=max_new_tokens,
+                do_sample=False,                     
+                eos_token_id=self.tokenizer.eos_token_id,
+                pad_token_id=self.tokenizer.eos_token_id,
+                no_repeat_ngram_size=3,          
+            )
+
+      
+        full_text = self.tokenizer.decode(output_ids[0], skip_special_tokens=True)
+
+        if "Answer:" in full_text:
+            core_answer = full_text.split("Answer:", 1)[1].strip()
+        else:
+            core_answer = full_text.strip()
+
+        core_answer = core_answer.split("\n", 1)[0]        #
+        core_answer = " ".join(core_answer.split())       
+
+        return f"{PREFIX}{core_answer}{SUFFIX}"
+
+
+gpt2_qa = GPT2QA()
+
+
+class QARequest(BaseModel):
+    question: str
+    max_new_tokens: int | None = 64
+
+
+@app.post("/gpt2/qa")
+def ask_gpt2(request: QARequest):
+    answer = gpt2_qa.answer(
+        request.question,
+        max_new_tokens=request.max_new_tokens or 64,
+    )
+    return {"question": request.question, "answer": answer}
+
+#to run FASTAPI file: uvicorn app.main:app --reload

@@ -18,3 +18,10 @@ wheels/
 *.tar.gz
 data/
 CNN_Assignment2/data/
+models/gpt2-qa-rl/model.safetensors
+models/gpt2-qa/model.safetensors
+
+
+#General Python junk
+__pycache__/
+*.pyc
